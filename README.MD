@@ -1,6 +1,6 @@
 # redir
 
-**redir** is a simple, lightweight and robust TCP port redirector written in Go.
+**Redir** is a simple, lightweight and robust TCP port redirector written in Go.
 
 It allows you to redirect any incoming connection on a local port to a remote IP and port, with full bidirectional support.
 
