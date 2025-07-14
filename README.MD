@@ -82,5 +82,4 @@ Currently, the following protocols are supported:
 MIT License
 
 See LICENSE for details.
-```
 
