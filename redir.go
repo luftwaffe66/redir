@@ -1,83 +1,177 @@
-package redir
+package main
 
 import (
-	"fmt"
-	"io"
-	"net"
-	"strings"
-	"time"
+        "fmt"
+        "io"
+        "log"
+        "net"
+        "net/http"
+
+        "github.com/fatih/color"
 )
 
-type RedirectOptions struct {
-	ListenPort      string // Port to listen on locally
-	DestinationIP   string // IP of the target machine
-	DestinationPort string // Port of the target machine
-	Verbose         bool   // Show info logs or not
+var (
+        red    = color.New(color.FgRed).SprintFunc()
+        green  = color.New(color.FgGreen).SprintFunc()
+        yellow = color.New(color.FgYellow).SprintFunc()
+        blue   = color.New(color.FgBlue).SprintFunc()
+        cyan   = color.New(color.FgCyan).SprintFunc()
+)
+
+func main() {
+        protocols := []string{"TCP", "UDP", "HTTP"}
+        fmt.Println(cyan("\n== Multi-Protocol Redirector ==\n"))
+
+        // Show protocol options
+        fmt.Println(blue("Select the protocol to redirect:"))
+        for i, p := range protocols {
+                fmt.Printf("%d) %s\n", i+1, p)
+        }
+
+        // Get user input for protocol choice
+        var protocolChoice int
+        fmt.Print("Enter the protocol number (1-3): ")
+        fmt.Scanln(&protocolChoice)
+
+        if protocolChoice < 1 || protocolChoice > len(protocols) {
+                log.Fatal(red("Invalid protocol choice. Exiting..."))
+        }
+
+        protocol := protocols[protocolChoice-1]
+
+        // Get destination details
+        var localPort, destIP, destPort string
+        fmt.Print("Enter local port to listen on: ")
+        fmt.Scanln(&localPort)
+        fmt.Print("Enter destination IP: ")
+        fmt.Scanln(&destIP)
+        fmt.Print("Enter destination port: ")
+        fmt.Scanln(&destPort)
+
+        // Call the appropriate redirect function
+        switch protocol {
+        case "TCP":
+                startTCPRedirect(localPort, destIP, destPort)
+        case "UDP":
+                startUDPRedirect(localPort, destIP, destPort)
+        case "HTTP":
+                startHTTPRedirect(localPort, destIP, destPort)
+        default:
+                log.Fatal(red("Protocol not supported"))
+        }
 }
 
-// StartRedirector runs the TCP port redirector.
-// It listens on ListenPort and forwards traffic to DestinationIP:DestinationPort.
-func StartRedirector(opts RedirectOptions) error {
-	destAddr := fmt.Sprintf("%s:%s", opts.DestinationIP, opts.DestinationPort)
-	listenAddr := ":" + opts.ListenPort
+// TCP redirector
+func startTCPRedirect(localPort, destIP, destPort string) {
+        listenAddr := ":" + localPort
+        destAddr := destIP + ":" + destPort
 
-	listener, err := net.Listen("tcp", listenAddr)
-	if err != nil {
-		return fmt.Errorf("failed to bind to port %s: %w", opts.ListenPort, err)
-	}
-	defer listener.Close()
+        listener, err := net.Listen("tcp", listenAddr)
+        if err != nil {
+                log.Fatal(red("Failed to start TCP listener: %v", err))
+        }
+        defer listener.Close()
 
-	log(opts, "[INFO]", fmt.Sprintf("Listening on :%s → %s", opts.ListenPort, destAddr))
+        fmt.Printf(green("\nTCP redirector started on %s -> %s\n", listenAddr, destAddr))
 
-	for {
-		clientConn, err := listener.Accept()
-		if err != nil {
-			log(opts, "[WARN]", fmt.Sprintf("Failed to accept connection: %v", err))
-			time.Sleep(time.Second)
-			continue
-		}
-
-		go handleConnection(opts, clientConn, destAddr)
-	}
+        for {
+                client, err := listener.Accept()
+                if err != nil {
+                        fmt.Printf(yellow("Error accepting connection: %v\n", err))
+                        continue
+                }
+                go redirectTCP(client, destAddr)
+        }
 }
 
-func handleConnection(opts RedirectOptions, client net.Conn, dest string) {
-	server, err := net.Dial("tcp", dest)
-	if err != nil {
-		log(opts, "[ERROR]", fmt.Sprintf("Failed to connect to %s: %v", dest, err))
-		client.Close()
-		return
-	}
+// Handle TCP redirection
+func redirectTCP(client net.Conn, destAddr string) {
+        server, err := net.Dial("tcp", destAddr)
+        if err != nil {
+                fmt.Printf(red("Failed to connect to destination: %v\n", err))
+                client.Close()
+                return
+        }
 
-	log(opts, "[INFO]", fmt.Sprintf("New connection: %s → %s", client.RemoteAddr(), dest))
-
-	go proxyData(opts, client, server)
-	go proxyData(opts, server, client)
+        go io.Copy(server, client)
+        go io.Copy(client, server)
 }
 
-func proxyData(opts RedirectOptions, src net.Conn, dst net.Conn) {
-	defer src.Close()
-	defer dst.Close()
+// UDP redirector
+func startUDPRedirect(localPort, destIP, destPort string) {
+        localAddr, err := net.ResolveUDPAddr("udp", ":"+localPort)
+        if err != nil {
+                log.Fatal(red("Failed to resolve UDP address: %v", err))
+        }
 
-	_, err := io.Copy(dst, src)
-	if err != nil && !isConnReset(err) {
-		log(opts, "[WARN]", fmt.Sprintf("I/O error %s → %s: %v", src.RemoteAddr(), dst.RemoteAddr(), err))
-	}
+        remoteAddr, err := net.ResolveUDPAddr("udp", destIP+":"+destPort)
+        if err != nil {
+                log.Fatal(red("Failed to resolve remote UDP address: %v", err))
+        }
+
+        conn, err := net.ListenUDP("udp", localAddr)
+        if err != nil {
+                log.Fatal(red("Failed to start UDP listener: %v", err))
+        }
+        defer conn.Close()
+
+        fmt.Printf(green("\nUDP redirector started on %s -> %s\n", localAddr, remoteAddr))
+
+        buf := make([]byte, 4096)
+        for {
+                n, addr, err := conn.ReadFromUDP(buf)
+                if err != nil {
+                        fmt.Printf(yellow("Error reading UDP: %v\n", err))
+                        continue
+                }
+
+                // Redirect UDP data
+                _, err = conn.WriteToUDP(buf[:n], remoteAddr)
+                if err != nil {
+                        fmt.Printf(red("Error sending UDP data: %v\n", err))
+                        continue
+                }
+
+                fmt.Printf(blue("UDP data redirected from %s -> %s\n", addr, remoteAddr))
+        }
 }
 
-func isConnReset(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "connection reset") ||
-		strings.Contains(errStr, "broken pipe") ||
-		strings.Contains(errStr, "use of closed network connection")
-}
+// HTTP redirector (basic)
+func startHTTPRedirect(localPort, destIP, destPort string) {
+        httpAddr := ":" + localPort
+        destAddr := destIP + ":" + destPort
 
-func log(opts RedirectOptions, level, message string) {
-	if level == "[INFO]" && !opts.Verbose {
-		return
-	}
-	fmt.Printf("%s %s\n", level, message)
+        fmt.Printf(green("\nHTTP redirector started on %s -> %s\n", httpAddr, destAddr))
+
+        // Listen for HTTP requests
+        http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+                client := &http.Client{}
+                req, err := http.NewRequest(r.Method, "http://"+destAddr+r.URL.Path, r.Body)
+                if err != nil {
+                        http.Error(w, "Failed to create request", http.StatusInternalServerError)
+                        return
+                }
+
+                // Forward headers
+                req.Header = r.Header
+
+                resp, err := client.Do(req)
+                if err != nil {
+                        http.Error(w, "Failed to connect to destination", http.StatusInternalServerError)
+                        return
+                }
+                defer resp.Body.Close()
+
+                // Forward response
+                for key, values := range resp.Header {
+                        for _, value := range values {
+                                w.Header().Add(key, value)
+                        }
+                }
+
+                w.WriteHeader(resp.StatusCode)
+                io.Copy(w, resp.Body)
+        })
+
+        log.Fatal(http.ListenAndServe(httpAddr, nil))
 }
