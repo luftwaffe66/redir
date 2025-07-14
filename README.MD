@@ -1,4 +1,4 @@
-# redir
+# Redir
 
 **Redir** is a simple, lightweight and robust TCP port redirector written in Go.
 
