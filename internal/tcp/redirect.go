@@ -44,7 +44,6 @@ func (r *Redirector) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.addr = listener.Addr()
 	defer listener.Close()
 
 	r.mu.Lock()
