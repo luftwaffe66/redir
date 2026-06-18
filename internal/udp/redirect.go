@@ -19,11 +19,16 @@ type Redirector struct {
 	listenAddr string
 	destAddr   string
 	logger     *slog.Logger
+	mu         sync.Mutex
 	addr       net.Addr // actual listening address, set after Start
 }
 
 // Addr returns the actual listening address after Start has been called.
-func (r *Redirector) Addr() net.Addr { return r.addr }
+func (r *Redirector) Addr() net.Addr {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.addr
+}
 
 // New creates a new UDP redirector.
 func New(listenAddr, destAddr string, logger *slog.Logger) *Redirector {
@@ -51,7 +56,10 @@ func (r *Redirector) Start(ctx context.Context) error {
 		return err
 	}
 	defer conn.Close()
+
+	r.mu.Lock()
 	r.addr = conn.LocalAddr()
+	r.mu.Unlock()
 
 	// Close conn on context cancellation to unblock ReadFromUDP.
 	go func() {

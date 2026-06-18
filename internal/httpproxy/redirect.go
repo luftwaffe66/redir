@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -22,11 +23,16 @@ type Redirector struct {
 	listenAddr string
 	destURL    *url.URL
 	logger     *slog.Logger
+	mu         sync.Mutex
 	addr       net.Addr // actual listener address, set after Start
 }
 
 // Addr returns the actual listening address after Start has been called.
-func (r *Redirector) Addr() net.Addr { return r.addr }
+func (r *Redirector) Addr() net.Addr {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.addr
+}
 
 // New creates a new HTTP redirector.
 // destAddr must be in host:port format.
@@ -79,7 +85,9 @@ func (r *Redirector) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	r.mu.Lock()
 	r.addr = listener.Addr()
+	r.mu.Unlock()
 	defer listener.Close()
 
 	r.logger.Info("http redirector started",

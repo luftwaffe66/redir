@@ -16,6 +16,7 @@ type Redirector struct {
 	listenAddr string
 	destAddr   string
 	logger     *slog.Logger
+	mu         sync.Mutex
 	addr       net.Addr // actual listener address, set after Start
 }
 
@@ -29,7 +30,11 @@ func New(listenAddr, destAddr string, logger *slog.Logger) *Redirector {
 }
 
 // Addr returns the actual listening address after Start has been called.
-func (r *Redirector) Addr() net.Addr { return r.addr }
+func (r *Redirector) Addr() net.Addr {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.addr
+}
 
 // Start begins listening and forwarding TCP connections.
 // Blocks until the context is cancelled or a fatal error occurs.
@@ -41,6 +46,10 @@ func (r *Redirector) Start(ctx context.Context) error {
 	}
 	r.addr = listener.Addr()
 	defer listener.Close()
+
+	r.mu.Lock()
+	r.addr = listener.Addr()
+	r.mu.Unlock()
 
 	r.logger.Info("tcp redirector started",
 		"listen", r.listenAddr,
